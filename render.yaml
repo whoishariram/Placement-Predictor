@@ -1,74 +1,62 @@
-# ============================================
-# Placement Predictor - Render Blueprint Config
-# ============================================
-# Deploy with: https://render.com/docs/blueprint-spec
+# =============================================================================
+# Render Blueprint Configuration for Placement Predictor
+# https://render.com/docs/blueprint-spec
 #
-# This file defines two services:
-# 1. Backend API (Flask + Gunicorn)  -> web service (free tier)
-# 2. Frontend (React static site)    -> static site (free tier)
+# Deploys TWO services from one blueprint:
+#   1. placement-predictor-api      -> Flask + ML backend   (web service)
+#   2. placement-predictor-frontend -> React SPA            (static site)
 #
-# Free-tier notes (these caused the previous validation errors):
-# - Free web services CANNOT use persistent disks -> no `disk:` here.
-#   SQLite lives on the ephemeral instance disk and is recreated on each
-#   deploy (init_db seeds the tables + default admin on startup).
-# - Static sites are served via Render's CDN and must NOT set `region`
-#   or `plan`.
-#
-# The build generates the training dataset (dataset/generate_dataset.py) and
-# trains the ML model (backend/ml/train_model.py) so predictions work from
-# the first request.
-#
-# To deploy:
-# 1. Push code to GitHub
-# 2. Connect repo to Render
-# 3. Use "Blueprint" deploy method
-# ============================================
-
+# Free-tier notes (these were the cause of the previous validation errors):
+#   - Free web services CANNOT have persistent `disk:` -> no disk is defined.
+#     The backend auto-trains the model on startup (initialize_model in
+#     backend/app.py) and keeps CSV data on the ephemeral instance disk, so
+#     a persistent disk is not required.
+#   - Static sites are served via Render's CDN and do NOT allow `region`
+#     or `plan` -> both are omitted below.
+# =============================================================================
 services:
-  # ---- Backend API ----
+
+  # ── Backend API (Flask + Machine Learning) ────────────────────────────────
   - type: web
     name: placement-predictor-api
-    env: python
+    runtime: python
     region: oregon
-    plan: free  # Upgrade to starter or professional for production
-    branch: main
+    plan: free
     buildCommand: |
       pip install --upgrade pip
       pip install -r backend/requirements.txt
-      python dataset/generate_dataset.py
-      mkdir -p model
-      python backend/ml/train_model.py
-    startCommand: cd backend && gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --access-logfile - --error-logfile -
+      cd backend && python -c "from models.placement_model import placement_predictor; placement_predictor.train(); print('Model trained successfully!')"
+    startCommand: cd backend && gunicorn app:app --bind 0.0.0.0:${PORT} --workers 2 --worker-class sync --timeout 120 --access-logfile - --error-logfile -
     healthCheckPath: /api/health
     envVars:
-      - key: FLASK_ENV
-        value: production
-      - key: DEBUG
-        value: false
-      - key: SECRET_KEY
-        generateValue: true
-      - key: CORS_ORIGINS
-        value: https://placement-predictor-ui.onrender.com,http://localhost:3000
-      - key: MAIL_USERNAME
-        sync: false  # Set manually in Render dashboard
-      - key: MAIL_PASSWORD
-        sync: false  # Set manually in Render dashboard
       - key: PYTHON_VERSION
         value: 3.11.0
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: false
+      - key: DB_TYPE
+        value: csv
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: WEB_CONCURRENCY
+        value: 2
 
-  # ---- Frontend (React static site) ----
-  - type: static
-    name: placement-predictor-ui
-    branch: main
-    buildCommand: |
-      cd frontend
-      npm ci
-      npm run build
-    publishPath: frontend/build
+  # ── Frontend (React static site) ──────────────────────────────────────────
+  # IMPORTANT: Render blueprints have NO `type: static` service type. Static
+  # sites must use `type: web` with `runtime: static` and publish via
+  # `staticPublishPath` (not `publishPath`). The old `type: static` entry
+  # caused the "unknown type 'static'" blueprint validation error.
+  - type: web
+    name: placement-predictor-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: build
     envVars:
       - key: REACT_APP_API_URL
-        value: https://placement-predictor-api.onrender.com/api
+        value: https://placement-predictor-api.onrender.com
     routes:
       - type: rewrite
-        source: /api/*
-        destination: https://placement-predictor-api.onrender.com/api/:splat
+        source: /*
+        destination: /index.html
