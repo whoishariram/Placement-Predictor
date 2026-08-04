@@ -1,0 +1,86 @@
+# ============================================
+# Placement Predictor - .gitignore
+# ============================================
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.log
+
+# ---- Virtual Environment ----
+backend/venv/
+backend/.venv/
+.env
+!.env.example
+
+# ---- Node / Frontend ----
+frontend/node_modules/
+frontend/build/
+frontend/.cache/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ---- IDE & Editors ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-workspace
+
+# ---- Flask Backend ----
+backend/instance/
+backend/flask_session/
+*.db
+*.sqlite
+*.sqlite3
+
+# ---- Generated Datasets (reproducible via script) ----
+dataset/student_data.csv
+dataset/companies.csv
+dataset/predictions.csv
+
+# ---- ML Model (reproducible via training) ----
+model/
+!model/.gitkeep
+
+# ---- Uploaded Files ----
+uploads/
+resumes/
+reports/
+!reports/.gitkeep
+
+# ---- Static / Templates (generated) ----
+static/
+templates/
+!static/.gitkeep
+!templates/.gitkeep
+
+# ---- Docker ----
+.docker/
+
+# ---- Environment ----
+environment.yml
+conda_env/
+*.env.local
+*.env.production
+
+# ---- OS files ----
+*.bak
+*.orig
+*.tmp
+
+# ---- Keep gitkeep files ----
+!.gitkeep

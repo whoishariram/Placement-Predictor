@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Dataset (generated at runtime)
+dataset/student_data.csv
+dataset/companies.csv
+
+# Model (generated at runtime)
+model/
+
+# Database (generated at runtime)
+database/
+flask_session/
+
+# Uploads (generated at runtime)
+uploads/
+resumes/
+reports/
+
+# Temp
+*.log
+.pytest_cache/
+.mypy_cache/

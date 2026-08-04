@@ -1,0 +1,230 @@
+name: Placement Predictor CI/CD
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: 'Deploy after tests pass?'
+        required: false
+        default: 'false'
+
+jobs:
+  lint:
+    name: 🔍 Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pylint black
+          pip install -r backend/requirements.txt
+
+      - name: Lint backend with flake8
+        run: |
+          cd backend
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=15 --max-line-length=120 --statistics
+
+      - name: Check Python formatting
+        run: |
+          cd backend
+          black --check --diff --quiet . || echo "Formatting issues found (non-blocking)"
+
+  test:
+    name: 🧪 Backend Tests
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-xdist
+          pip install -r backend/requirements.txt
+
+      - name: Run unit tests (fast)
+        run: |
+          cd backend
+          python -m pytest tests/ \
+            -v \
+            --tb=short \
+            -k "not slow" \
+            --cov=ml \
+            --cov=auth \
+            --cov=analysis \
+            --cov=alerts \
+            --cov=utils \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            -p no:warnings \
+            -n 2
+        continue-on-error: false
+
+      - name: Run slow tests (ML training)
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        run: |
+          cd backend
+          python -m pytest tests/ \
+            -v \
+            --tb=short \
+            -k "slow" \
+            --cov=ml \
+            --cov-report=term \
+            -p no:warnings \
+            --timeout=120
+        continue-on-error: true
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: backend/coverage.xml
+          fail_ci_if_error: false
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ matrix.python-version }}
+          path: backend/coverage.xml
+          retention-days: 7
+
+  frontend-lint:
+    name: 🎨 Frontend Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci || npm install
+
+      - name: Lint frontend
+        run: |
+          cd frontend
+          npx eslint src/ --ext .js,.jsx || echo "ESLint issues found (non-blocking)"
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          CI=false npm run build
+
+      - name: Upload frontend build
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build
+          path: frontend/build/
+          retention-days: 3
+
+  security-scan:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install bandit
+        run: pip install bandit
+
+      - name: Security scan backend
+        run: |
+          cd backend
+          bandit -r . -f json -o bandit_report.json || echo "Security issues found"
+        continue-on-error: true
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: backend/bandit_report.json
+          retention-days: 30
+
+  deploy-backend:
+    name: 🚀 Deploy Backend
+    needs: [test, frontend-lint]
+    if: |
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') &&
+      (github.event.inputs.deploy == 'true' || github.event_name != 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: ${{ secrets.RENDER_BACKEND_SERVICE_ID }}
+        run: |
+          curl -X POST \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY"
+        continue-on-error: true
+
+  deploy-frontend:
+    name: 🚀 Deploy Frontend
+    needs: [test, frontend-lint]
+    if: |
+      github.event_name == 'push' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Vercel
+        uses: amondnet/vercel-action@v25
+        with:
+          vercel-token: ${{ secrets.VERCEL_TOKEN }}
+          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
+          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
+          vercel-args: '--prod'
+        continue-on-error: true
+
+  notify:
+    name: 📢 Notify
+    needs: [test, security-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check status
+        run: |
+          echo "CI Pipeline Complete"
+          echo "Status: ${{ job.status }}"
+
+      - name: Create status badge
+        uses: action-badges/core@0.1.1
+        if: github.ref == 'refs/heads/main'
+        with:
+          label: "CI Status"
+          message: "${{ job.status }}"
+          color: "${{ job.status == 'success' && 'green' || 'red' }}"
+          filename: "ci-status.json"
