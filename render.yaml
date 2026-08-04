@@ -25,7 +25,7 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r backend/requirements.txt
-      cd backend && python -c "from models.placement_model import placement_predictor; placement_predictor.train(); print('Model trained successfully!')"
+      python -c "import sys, os; sys.path.insert(0, os.path.join(os.getcwd(), 'backend')); from models.placement_model import placement_predictor; placement_predictor.train(); print('Model trained successfully!')"
     startCommand: cd backend && gunicorn app:app --bind 0.0.0.0:${PORT} --workers 2 --worker-class sync --timeout 120 --access-logfile - --error-logfile -
     healthCheckPath: /api/health
     envVars:
