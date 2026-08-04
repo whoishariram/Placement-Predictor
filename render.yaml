@@ -2,10 +2,21 @@
 # Placement Predictor - Render Blueprint Config
 # ============================================
 # Deploy with: https://render.com/docs/blueprint-spec
-# 
+#
 # This file defines two services:
-# 1. Backend API (Flask + Gunicorn)
-# 2. Frontend (React static site)
+# 1. Backend API (Flask + Gunicorn)  -> web service (free tier)
+# 2. Frontend (React static site)    -> static site (free tier)
+#
+# Free-tier notes (these caused the previous validation errors):
+# - Free web services CANNOT use persistent disks -> no `disk:` here.
+#   SQLite lives on the ephemeral instance disk and is recreated on each
+#   deploy (init_db seeds the tables + default admin on startup).
+# - Static sites are served via Render's CDN and must NOT set `region`
+#   or `plan`.
+#
+# The build generates the training dataset (dataset/generate_dataset.py) and
+# trains the ML model (backend/ml/train_model.py) so predictions work from
+# the first request.
 #
 # To deploy:
 # 1. Push code to GitHub
@@ -24,60 +35,40 @@ services:
     buildCommand: |
       pip install --upgrade pip
       pip install -r backend/requirements.txt
-      pip install gunicorn
+      python dataset/generate_dataset.py
+      mkdir -p model
+      python backend/ml/train_model.py
     startCommand: cd backend && gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --timeout 120 --access-logfile - --error-logfile -
     healthCheckPath: /api/health
     envVars:
       - key: FLASK_ENV
         value: production
       - key: DEBUG
-        value: False
+        value: false
       - key: SECRET_KEY
         generateValue: true
-      - key: DATABASE_URL
-        value: sqlite:////var/data/placement.db
       - key: CORS_ORIGINS
-        value: https://placement-predictor.onrender.com,http://localhost:3000
+        value: https://placement-predictor-ui.onrender.com,http://localhost:3000
       - key: MAIL_USERNAME
         sync: false  # Set manually in Render dashboard
       - key: MAIL_PASSWORD
         sync: false  # Set manually in Render dashboard
       - key: PYTHON_VERSION
         value: 3.11.0
-    disk:
-      name: data
-      mountPath: /var/data
-      sizeGB: 1
 
-  # ---- Frontend ----
-  - type: web
+  # ---- Frontend (React static site) ----
+  - type: static
     name: placement-predictor-ui
-    env: static
-    region: oregon
-    plan: free
     branch: main
     buildCommand: |
       cd frontend
       npm ci
       npm run build
-    staticPublishPath: ./frontend/build
+    publishPath: frontend/build
     envVars:
       - key: REACT_APP_API_URL
         value: https://placement-predictor-api.onrender.com/api
-    headers:
-      - path: /*
-        name: X-Frame-Options
-        value: SAMEORIGIN
-      - path: /*
-        name: X-Content-Type-Options
-        value: nosniff
-      - path: /*
-        name: Referrer-Policy
-        value: strict-origin-when-cross-origin
     routes:
       - type: rewrite
         source: /api/*
         destination: https://placement-predictor-api.onrender.com/api/:splat
-      - type: rewrite
-        source: /*
-        destination: /index.html
